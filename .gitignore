@@ -1,0 +1,7 @@
+demo.mp4
+
+data-preprocess/annotated_data/*
+
+human-tracking/output/*
+
+human-tracking/pretrained/*
