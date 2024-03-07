@@ -8,7 +8,9 @@ Output: 45min-length video with action annotation
 
 Output: short video clip - action label dataset
 
-> Video clips are cut in two dimension: temporal and spatial
+> Spatial: add bounding box
+>
+> Temporal: cut clip
 
 # Four stages
 
@@ -44,3 +46,10 @@ Output: video with annotation
 * Long-range movement action
 * Final action recognition model
   * If large model, how to finetune it? (PEFT & loss)
+* Hot area to confirm attention position
+
+# Engineering
+
+* Preprocess annotated data with ByteTrack to construct a dataset
+* Temporal action localization add bounding box
+* Video action recognition pipeline with huggingface transformers library

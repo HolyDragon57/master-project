@@ -1,20 +1,29 @@
 import os
+import os.path as osp
 import json
 import cv2
 import math
 from datetime import datetime
 import numpy as np
+import csv
 
 # Macros: file paths, labels, etc.
 
 video_path = "annotated_data/嵌套序列 11.mp4"
+file_name = osp.splitext(osp.basename(video_path))[0]
 annotation_path = "annotated_data/11-1.json"
-track_path = "ByteTrack/output/yolox_m_mix_det/track_result/2024_01_19_12_55_21.txt"
+track_path = "annotated_data/嵌套序列 11_2024_03_06_15_27_54.txt"
+output_dir = "extraction_result"
+teacher_dataset_label_path = "extraction_result/teacher_clip-action.csv"
+student_dataset_label_path = "extraction_result/student_clip-action.csv"
 # index[0]占位符
 index = ['', '老师', '表情', '学生1', '学生2', '学生3', '学生4', '学生5', '学生6', '学生7', '物品']
 teacher_actions = ['讲课', '提问', '板书', '巡查', '回答', '操作电脑', '坐下', '喝水']
 student_actions = ['看书', '记笔记', '坐着回答', '与同学交流', '拿物品', '举手', '起立回答', '伸懒腰', 
             '趴桌上', '走上讲台讲解', '吃东西', '喝水', '鼓掌', '传递物品', '打闹', '提问', '看电子产品']
+action_index = set([1, 3, 4, 5, 6, 7, 8, 9])
+# 由于人体和上半身的缘故，高度上可能可以截掉一半？
+upper_body_ratio = 0.6
 
 # ByteTrack processing
 
@@ -40,77 +49,130 @@ def get_segments(annotation_path, track_path):
     metadata = data['metadata']
     
     segments = []
-    for _, info in enumerate(metadata):
+    bboxes = {}
+    for i, info in enumerate(metadata):
         if len(metadata[info]['xy']) == 0:
             segments.append(Segment(metadata[info]['z'], metadata[info]['av']))
+        else:
+            if int(next(iter(metadata[info]['av']))) in action_index:
+                bboxes[info] = metadata[info]
 
-    return metadata, track_data, segments
+    return bboxes, track_data, segments
 
-def confirm_id(segments, metadata, track_data):
-    id = set()
-    action_index = set([1, 3, 4, 5, 6, 7, 8, 9])
+def confirm_id(segments, bboxes, track_data):
+    segment_id = {}
+
+    cap = cv2.VideoCapture(video_path)
+    fps = cap.get(cv2.CAP_PROP_FPS)
+
+    start_bboxes = {}
+    for index, info in enumerate(bboxes):
+        if bboxes[info]['z'][0] == 0:
+            start_bboxes[info] = bboxes[info]
+
     for segment in segments:
-        j = int(segment.character)
-        if j not in id and j in action_index:
+        i = int(segment.character)
+        assert i in action_index
+        if segment.startTime != 0:
             min_diff = float('inf')  
             nearest = None
-            for index, info in enumerate(metadata):
-                if len(metadata[info]['xy']) != 0 and metadata[info]['z'][0] != 0:
-                    diff = abs(segment.startTime - metadata[info]['z'][0])
-                    if diff < min_diff:
-                        min_diff = diff
-                        nearest = info
-            frame = int(metadata[info]['z'][0] * 30)
+            for index, info in enumerate(bboxes):
+                diff = abs(segment.startTime - bboxes[info]['z'][0])
+                if diff < min_diff:
+                    min_diff = diff
+                    nearest = info
+            frame = int(bboxes[nearest]['z'][0] * fps) - 1
             targetID = -1
-            for tracklet in track_data:
-                IoU = 0
-                target = metadata[nearest]['xy'][1:]
-                if int(tracklet[0]) == frame:
-                    tmp = calculate_iou(target, tracklet[2:6])
-                    if tmp > IoU:
-                        IoU = tmp
-                        targetID = tracklet[1]
-                if tracklet[0] > frame:
+            index = binary_search(track_data, frame)
+            target = bboxes[nearest]['xy'][1:]
+            IoU = 0
+            while int(track_data[index][0]) == frame:
+                tmp = calculate_iou(target, track_data[index][2:6])
+                if tmp > IoU:
+                    IoU = tmp
+                    targetID = int(track_data[index][1])
+                index += 1
+            if targetID != -1 and IoU > 0.2:
+                segment_id[segment] = targetID
+        else:
+            target = None
+            for index, info in enumerate(start_bboxes):
+                if int(segment.character) == int(next(iter(start_bboxes[info]['av']))):
+                    target = start_bboxes[info]['xy'][1:]
                     break
-            if targetID != -1:
-                id.add(targetID)
-    return id
+            i = 0
+            IoU = 0
+            targetID = -1
+            while int(track_data[i][0]) == 0:
+                tmp = calculate_iou(target, track_data[i][2:6])
+                if tmp > IoU:
+                    IoU = tmp
+                    targetID = int(track_data[i][1])
+                i += 1
+            if targetID != -1 and IoU > 0.2:
+                segment_id[segment] = targetID
 
-def extract_target(id, track_data):
+    return segment_id
+
+def extract_target(segment_id, track_data):
     cap = cv2.VideoCapture(video_path)
 
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     fps = int(cap.get(cv2.CAP_PROP_FPS))
-    output_video_name = 'extraction_result_' + datetime.now().strftime("%Y-%m-%d-%H-%M-%S") + ".mp4"
-    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-    out = cv2.VideoWriter(output_video_name, fourcc, fps, (width, height))
 
-    while cap.isOpened():
-        ret, frame = cap.read()
-        if not ret:
-            break
+    segment_num = 0
 
-        for tracklet in track_data:
-            if tracklet[1] in id:
-                color = assign_color(int(tracklet[1]))
-                cv2.rectangle(frame, 
-                    (int(tracklet[2]), int(tracklet[3])), 
-                    (int(tracklet[2] + tracklet[4]), int(tracklet[3] + tracklet[5])),
-                    color,
-                    2)
+    for segment, id in segment_id.items():
+        attrs = vars(segment)
+        print(', '.join("%s: %s" % item for item in attrs.items()))
 
-        key = cv2.waitKey(1)
-        if key == ord('q') or key == ord("Q") or key == 27:
-            break
+        # output_video_name = file_name + '_extraction_result_' + str(segment_num) + ".mp4"
+        if int(segment.character) == 1:
+            output_video_name = file_name + '_' + str(segment_num) + '-' + teacher_actions[int(segment.description)] + ".mp4"
+        else:
+            output_video_name = file_name + '_' + str(segment_num) + '-' +student_actions[int(segment.description)] + ".mp4"
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        out = cv2.VideoWriter(osp.join(output_dir, output_video_name), fourcc, fps, (width, height))
+        print(f"Writing {output_video_name}")
 
-        out.write(frame)
-    
-    cap.release()        
+        current_frame = math.floor(segment.startTime * fps) - 1 if segment.startTime != 0 else 0
+        end_frame = math.ceil(segment.endTime * fps) - 1
+        cap.set(cv2.CAP_PROP_POS_FRAMES, current_frame)
+
+        index = binary_search(track_data, current_frame)
+        while current_frame <= end_frame:
+            ret, frame = cap.read()
+            if not ret:
+                break
+            while index < len(track_data) and int(track_data[index][0]) == current_frame:
+                if int(track_data[index][1]) == id:
+                    cv2.rectangle(frame, 
+                        (int(track_data[index][2]), int(track_data[index][3])), 
+                        (int(track_data[index][2] + track_data[index][4]), int(track_data[index][3] + track_data[index][5] * upper_body_ratio)),
+                        (0, 0, 255),
+                        2)
+                index += 1
+            current_frame += 1
+            out.write(frame)
+
+        segment_num += 1
+
+        if int(segment.character) == 1:
+            with open(teacher_dataset_label_path, mode='a', newline='') as csv_file:
+                csv_writer = csv.writer(csv_file)
+                csv_writer.writerow([output_video_name, teacher_actions[int(segment.description)]])
+        else:
+            with open(student_dataset_label_path, mode='a', newline='') as csv_file:
+                csv_writer = csv.writer(csv_file)
+                csv_writer.writerow([output_video_name, student_actions[int(segment.description)]])
+        
+    cap.release()    
 
 def calculate_iou(box1, box2):
     x1, y1, w1, h1 = box1[0], box1[1], box1[2], box1[3]
-    x2, y2, w2, h2 = box2[0], box2[1], box2[2], box2[3]
+    # Attention! It's not normal IoU!
+    x2, y2, w2, h2 = box2[0], box2[1], box2[2], box2[3] * upper_body_ratio
 
     inter_x1 = max(x1, x2)
     inter_y1 = max(y1, y2)
@@ -123,100 +185,49 @@ def calculate_iou(box1, box2):
 
     return iou
 
+def binary_search(track_data, target_frame):
+    low, high = 0, len(track_data) - 1
+
+    while low <= high:
+        mid = low + (high - low) // 2
+        current_frame = int(track_data[mid][0])
+
+        if current_frame == target_frame:
+            high = mid - 1
+        elif current_frame < target_frame:
+            low = mid + 1
+        else:
+            high = mid - 1
+
+    if low < len(track_data) and int(track_data[low][0]) == target_frame:
+        if low != 0 and int(track_data[low-1][0]) == target_frame - 1:
+            return low
+        elif low == 0:
+            return low
+        else:
+            return -1
+    else:
+        return -1
+
 # Produce isolated training data
 
-def assign_color(cls_id): 
-    _COLORS = np.array(
-        [
-            0.000, 0.447, 0.741,
-            0.850, 0.325, 0.098,
-            0.929, 0.694, 0.125,
-            0.494, 0.184, 0.556,
-            0.466, 0.674, 0.188,
-            0.301, 0.745, 0.933,
-            0.635, 0.078, 0.184,
-            0.300, 0.300, 0.300,
-            0.600, 0.600, 0.600,
-            1.000, 0.000, 0.000,
-            1.000, 0.500, 0.000,
-            0.749, 0.749, 0.000,
-            0.000, 1.000, 0.000,
-            0.000, 0.000, 1.000,
-            0.667, 0.000, 1.000,
-            0.333, 0.333, 0.000,
-            0.333, 0.667, 0.000,
-            0.333, 1.000, 0.000,
-            0.667, 0.333, 0.000,
-            0.667, 0.667, 0.000,
-            0.667, 1.000, 0.000,
-            1.000, 0.333, 0.000,
-            1.000, 0.667, 0.000,
-            1.000, 1.000, 0.000,
-            0.000, 0.333, 0.500,
-            0.000, 0.667, 0.500,
-            0.000, 1.000, 0.500,
-            0.333, 0.000, 0.500,
-            0.333, 0.333, 0.500,
-            0.333, 0.667, 0.500,
-            0.333, 1.000, 0.500,
-            0.667, 0.000, 0.500,
-            0.667, 0.333, 0.500,
-            0.667, 0.667, 0.500,
-            0.667, 1.000, 0.500,
-            1.000, 0.000, 0.500,
-            1.000, 0.333, 0.500,
-            1.000, 0.667, 0.500,
-            1.000, 1.000, 0.500,
-            0.000, 0.333, 1.000,
-            0.000, 0.667, 1.000,
-            0.000, 1.000, 1.000,
-            0.333, 0.000, 1.000,
-            0.333, 0.333, 1.000,
-            0.333, 0.667, 1.000,
-            0.333, 1.000, 1.000,
-            0.667, 0.000, 1.000,
-            0.667, 0.333, 1.000,
-            0.667, 0.667, 1.000,
-            0.667, 1.000, 1.000,
-            1.000, 0.000, 1.000,
-            1.000, 0.333, 1.000,
-            1.000, 0.667, 1.000,
-            0.333, 0.000, 0.000,
-            0.500, 0.000, 0.000,
-            0.667, 0.000, 0.000,
-            0.833, 0.000, 0.000,
-            1.000, 0.000, 0.000,
-            0.000, 0.167, 0.000,
-            0.000, 0.333, 0.000,
-            0.000, 0.500, 0.000,
-            0.000, 0.667, 0.000,
-            0.000, 0.833, 0.000,
-            0.000, 1.000, 0.000,
-            0.000, 0.000, 0.167,
-            0.000, 0.000, 0.333,
-            0.000, 0.000, 0.500,
-            0.000, 0.000, 0.667,
-            0.000, 0.000, 0.833,
-            0.000, 0.000, 1.000,
-            0.000, 0.000, 0.000,
-            0.143, 0.143, 0.143,
-            0.286, 0.286, 0.286,
-            0.429, 0.429, 0.429,
-            0.571, 0.571, 0.571,
-            0.714, 0.714, 0.714,
-            0.857, 0.857, 0.857,
-            0.000, 0.447, 0.741,
-            0.314, 0.717, 0.741,
-            0.50, 0.5, 0
-        ]
-    ).astype(np.float32).reshape(-1, 3)
-
-    return (_COLORS[cls_id % 80] * 255).astype(np.uint8).tolist()
-
-metadata, track_data, segments = get_segments(annotation_path, track_path)
-id = confirm_id(segments, metadata, track_data)
-print(id)
-# for segment in segments:
-#     attrs = vars(segment)
+bboxes, track_data, segments = get_segments(annotation_path, track_path)
+segment_id = confirm_id(segments, bboxes, track_data)
+extract_target(segment_id, track_data)
+# for k, v in segment_id.items():
+#     attrs = vars(k)
 #     print(', '.join("%s: %s" % item for item in attrs.items()))
-extract_target(id, track_data)
+#     print(f"{v}")
+# print(len(segment_id))
+# print(len(segments))
+# print(len(bboxes))
+
+# Check relevant info's validity
+# for segment in segments:
+#     if segment not in segment_id:
+#         attrs = vars(segment)
+#         print(', '.join("%s: %s" % item for item in attrs.items()))
+# print(len(segments))
+# print(len(track_data))
+# print(len(track_data[0]))
+# print(bboxes["1_hMXl6LL6"])
