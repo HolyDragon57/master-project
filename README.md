@@ -51,5 +51,7 @@ Output: video with annotation
 # Engineering
 
 * Preprocess annotated data with ByteTrack to construct a dataset
+  * Batch process relevant coding
+  * Attach label to bounding box
 * Temporal action localization add bounding box
 * Video action recognition pipeline with huggingface transformers library

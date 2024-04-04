@@ -1,0 +1,67 @@
+{
+    "path": {
+        "output_path": "./output",
+        "input_path": "./input"
+    },
+    "localization": {
+        "clip_duration": 4,
+        "time_step": 2,
+        "upper_body_ratio": 0.8
+    },
+    "label": {
+        "threshold": 0.3,
+        "default_action": {
+            "teacher": "讲课",
+            "student": "听课"
+        },
+        "actions": {
+            "teacher": [
+                "提问",
+                "板书",
+                "巡查",
+                "回答",
+                "操作电脑",
+                "坐下",
+                "喝水"
+            ],
+            "student": [
+                "看书",
+                "记笔记",
+                "坐着回答",
+                "与同学交流",
+                "拿物品",
+                "举手",
+                "起立回答",
+                "伸懒腰",
+                "趴桌上",
+                "走上讲台讲解",
+                "吃东西",
+                "喝水",
+                "鼓掌",
+                "传递物品",
+                "打闹",
+                "提问",
+                "看电子产品"
+            ],
+            "strudent_en": [
+                "reading book",
+                "taking notes",
+                "answering question while sitting",
+                "talking with classmate",
+                "getting things",
+                "raising hand",
+                "standing to answer question",
+                "stretching",
+                "lying on the table",
+                "walking to the podium",
+                "eating",
+                "drinking water",
+                "clapping hands",
+                "passing things",
+                "frolicking",
+                "asking question",
+                "looking at electronics"
+            ]
+        }
+    }
+}

@@ -1,9 +1,16 @@
-demo.mp4
+input/*
+
+output/*
 
 data-preprocess/annotated_data/*
 
 data-preprocess/extraction_result/*
 
+data-preprocess/SourceHanSansCN-Regular.otf
+
 human-tracking/output/*
 
 human-tracking/pretrained/*
+
+localization/output_clips/*
+

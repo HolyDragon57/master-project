@@ -14,6 +14,7 @@ from yolox.utils.visualize import plot_tracking
 from yolox.tracker.byte_tracker import BYTETracker
 from yolox.tracking_utils.timer import Timer
 
+import json
 
 IMAGE_EXT = [".jpg", ".jpeg", ".webp", ".bmp", ".png"]
 
@@ -258,6 +259,11 @@ def imageflow_demo(predictor, vis_folder, current_time, args):
     timer = Timer()
     frame_id = 0
     results = []
+
+    with open('./config.json', 'r') as f:
+        config = json.load(f)
+    upper_body_ratio = config['localization']['upper_body_ratio']
+
     while True:
         if frame_id % 20 == 0:
             logger.info('Processing frame {} ({:.2f} fps)'.format(frame_id, 1. / max(1e-5, timer.average_time)))
@@ -282,7 +288,7 @@ def imageflow_demo(predictor, vis_folder, current_time, args):
                         )
                 timer.toc()
                 online_im = plot_tracking(
-                    img_info['raw_img'], online_tlwhs, online_ids, frame_id=frame_id + 1, fps=1. / timer.average_time
+                    img_info['raw_img'], online_tlwhs, online_ids, frame_id=frame_id + 1, fps=1. / timer.average_time, upper_body_ratio=upper_body_ratio
                 )
             else:
                 timer.toc()

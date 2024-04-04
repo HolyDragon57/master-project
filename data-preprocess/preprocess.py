@@ -3,11 +3,11 @@ import os.path as osp
 import json
 import cv2
 import math
-from datetime import datetime
-import numpy as np
 import csv
+from PIL import Image, ImageDraw, ImageFont
+import numpy
 
-# Macros: file paths, labels, etc.
+# Macros variables, file paths, labels, etc.
 
 video_path = "annotated_data/嵌套序列 11.mp4"
 file_name = osp.splitext(osp.basename(video_path))[0]
@@ -17,13 +17,16 @@ output_dir = "extraction_result"
 teacher_dataset_label_path = "extraction_result/teacher_clip-action.csv"
 student_dataset_label_path = "extraction_result/student_clip-action.csv"
 # index[0]占位符
-index = ['', '老师', '表情', '学生1', '学生2', '学生3', '学生4', '学生5', '学生6', '学生7', '物品']
+label_index = ['', '老师', '表情', '学生1', '学生2', '学生3', '学生4', '学生5', '学生6', '学生7', '物品']
 teacher_actions = ['讲课', '提问', '板书', '巡查', '回答', '操作电脑', '坐下', '喝水']
 student_actions = ['看书', '记笔记', '坐着回答', '与同学交流', '拿物品', '举手', '起立回答', '伸懒腰', 
             '趴桌上', '走上讲台讲解', '吃东西', '喝水', '鼓掌', '传递物品', '打闹', '提问', '看电子产品']
 action_index = set([1, 3, 4, 5, 6, 7, 8, 9])
 # 由于人体和上半身的缘故，高度上可能可以截掉一半？
 upper_body_ratio = 0.6
+
+student_actions_en = ["reading book", "taking notes", "answering question while sitting", "talking with classmate", "getting things", "raising hand", "standing to answer question",
+            "stretching", "lying on the table", "walking to the podium", "eating", "drinking water", "clapping hands", "passing things", "frolicking", "asking question", "looking at electronics"]
 
 # ByteTrack processing
 
@@ -121,24 +124,27 @@ def extract_target(segment_id, track_data):
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     fps = int(cap.get(cv2.CAP_PROP_FPS))
 
+    # font = ImageFont.truetype('./SourceHanSansCN-Regular.otf', size=20)
+
     segment_num = 0
 
     for segment, id in segment_id.items():
         attrs = vars(segment)
         print(', '.join("%s: %s" % item for item in attrs.items()))
 
-        # output_video_name = file_name + '_extraction_result_' + str(segment_num) + ".mp4"
         if int(segment.character) == 1:
             output_video_name = file_name + '_' + str(segment_num) + '-' + teacher_actions[int(segment.description)] + ".mp4"
         else:
-            output_video_name = file_name + '_' + str(segment_num) + '-' +student_actions[int(segment.description)] + ".mp4"
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+            output_video_name = file_name + '_' + str(segment_num) + '-' + student_actions[int(segment.description)] + ".mp4"
+        fourcc = cv2.VideoWriter_fourcc(*'avc1')
         out = cv2.VideoWriter(osp.join(output_dir, output_video_name), fourcc, fps, (width, height))
         print(f"Writing {output_video_name}")
 
         current_frame = math.floor(segment.startTime * fps) - 1 if segment.startTime != 0 else 0
         end_frame = math.ceil(segment.endTime * fps) - 1
         cap.set(cv2.CAP_PROP_POS_FRAMES, current_frame)
+
+        # label = teacher_actions[int(segment.description)] if int(segment.character) == 1 else student_actions[int(segment.description)]
 
         index = binary_search(track_data, current_frame)
         while current_frame <= end_frame:
@@ -147,11 +153,22 @@ def extract_target(segment_id, track_data):
                 break
             while index < len(track_data) and int(track_data[index][0]) == current_frame:
                 if int(track_data[index][1]) == id:
+                    x = int(track_data[index][2])
+                    y = int(track_data[index][3])
+                    w = int(track_data[index][4])
+                    h = int(track_data[index][5] * upper_body_ratio)
                     cv2.rectangle(frame, 
-                        (int(track_data[index][2]), int(track_data[index][3])), 
-                        (int(track_data[index][2] + track_data[index][4]), int(track_data[index][3] + track_data[index][5] * upper_body_ratio)),
+                        (x, y), 
+                        (x + w, y + h),
                         (0, 0, 255),
                         2)
+                    
+                    # Draw Chinese character
+                    # pil_image = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+                    # draw = ImageDraw.Draw(pil_image)
+                    # draw.text((x, y - 28), label, font=font, fill=(0, 0, 255))
+                    # frame = cv2.cvtColor(numpy.array(pil_image), cv2.COLOR_RGB2BGR)
+
                 index += 1
             current_frame += 1
             out.write(frame)
